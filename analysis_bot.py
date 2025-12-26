@@ -4,7 +4,6 @@ import pandas as pd
 from datetime import datetime, timezone
 import yfinance as yf
 
-# ===================== AYARLAR =====================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -12,11 +11,10 @@ SYMBOLS = {
     "ALTIN": "GC=F",
     "GÜMÜŞ": "SI=F",
     "BTC": "BTC-USD",
-    "DXY": "DX-Y.NYB",     # Dollar Index
-    "US10Y": "^TNX"        # US 10Y Yield
+    "DXY": "DX-Y.NYB",
+    "US10Y": "^TNX"
 }
 
-# ===================== GÖSTERGELER =====================
 def ema(s, p):
     return s.ewm(span=p, adjust=False).mean()
 
@@ -38,21 +36,25 @@ def macd(s):
 def fetch(sym):
     df = yf.download(sym, period="300d", interval="1d", progress=False)
     df = df.dropna()
-    df.columns = [c.lower() for c in df.columns]
+
+    # 🔧 MultiIndex FIX
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0].lower() for c in df.columns]
+    else:
+        df.columns = [c.lower() for c in df.columns]
+
     return df
 
-# ===================== ANALİZ =====================
 def analyze(df, name):
     close = df["close"]
     vol = df["volume"] if "volume" in df else None
 
-    e20, e50, e200 = ema(close,20), ema(close,50), ema(close,200)
+    e20, e50 = ema(close,20), ema(close,50)
     m, s, h = macd(close)
     r = rsi(close)
 
     score = 0
 
-    # TREND (30)
     if close.iloc[-1] > e20.iloc[-1] > e50.iloc[-1]:
         score += 30
         trend = "🟢 UP"
@@ -63,12 +65,10 @@ def analyze(df, name):
         score += 15
         trend = "🟡 NÖTR"
 
-    # MACD (25)
     score += 15 if m.iloc[-1] > s.iloc[-1] else 5
     hist = "↗️" if h.iloc[-1] > h.iloc[-2] else "↘️"
     score += 10 if hist == "↗️" else 0
 
-    # RSI (20)
     rsi_val = r.iloc[-1]
     if 45 <= rsi_val <= 65:
         score += 20
@@ -80,11 +80,9 @@ def analyze(df, name):
         score += 10
         rsi_state = f"{rsi_val:.1f}"
 
-    # MOMENTUM (15)
     chg = (close.iloc[-1] / close.iloc[-2] - 1) * 100
     score += 15 if chg > 0 else 5
 
-    # HACİM (BTC) (10)
     vol_state = ""
     if name == "BTC" and vol is not None:
         vr = vol.iloc[-1] / vol.rolling(20).mean().iloc[-1]
@@ -103,7 +101,6 @@ def analyze(df, name):
         "volume": vol_state
     }
 
-# ===================== TELEGRAM =====================
 def send(msg):
     if not TELEGRAM_TOKEN or not CHAT_ID:
         print(msg)
@@ -113,44 +110,31 @@ def send(msg):
         data={"chat_id": CHAT_ID, "text": msg, "disable_web_page_preview": True}
     )
 
-# ===================== MAIN =====================
 def main():
     gold = analyze(fetch(SYMBOLS["ALTIN"]), "ALTIN")
     silver = analyze(fetch(SYMBOLS["GÜMÜŞ"]), "GÜMÜŞ")
     btc = analyze(fetch(SYMBOLS["BTC"]), "BTC")
 
-    dxy_df = fetch(SYMBOLS["DXY"])
-    us10_df = fetch(SYMBOLS["US10Y"])
+    dxy = fetch(SYMBOLS["DXY"])
+    us10 = fetch(SYMBOLS["US10Y"])
 
-    dxy_trend = "⬆️" if dxy_df["close"].iloc[-1] > ema(dxy_df["close"],20).iloc[-1] else "⬇️"
-    us10_trend = "⬆️" if us10_df["close"].iloc[-1] > ema(us10_df["close"],20).iloc[-1] else "⬇️"
+    dxy_trend = "⬆️" if dxy["close"].iloc[-1] > ema(dxy["close"],20).iloc[-1] else "⬇️"
+    us10_trend = "⬆️" if us10["close"].iloc[-1] > ema(us10["close"],20).iloc[-1] else "⬇️"
 
-    # MAKRO PUAN ETKİSİ
-    macro_note = ""
     if dxy_trend == "⬆️":
         gold["score"] -= 8
         silver["score"] -= 6
-        macro_note += "• DXY güçlü (emtia baskı)\n"
-    else:
-        gold["score"] += 5
-        silver["score"] += 5
 
     if us10_trend == "⬆️":
         gold["score"] -= 7
-        macro_note += "• US10Y yükseliyor (altın negatif)\n"
-    else:
-        gold["score"] += 5
 
     gs = gold["close"] / silver["close"]
-    gs_state = "ALTIN ÖNDE" if gold["score"] > silver["score"] else "GÜMÜŞ ÖNDE"
-
     gb = gold["close"] / btc["close"]
-    gb_state = "RISK-OFF" if gb > (gold["close"]/btc["close"]) else "RISK-ON"
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     msg = f"""
-📊 GÜNLÜK ALTIN / GÜMÜŞ / BTC ANALİZİ
+📊 GÜNLÜK ALTIN / GÜMÜŞ / BTC
 🕛 12:00 TR | {now}
 
 🟢 ALTIN — Skor: {gold['score']}
@@ -168,16 +152,12 @@ def main():
 • RSI: {btc['rsi']}
 • {btc['volume']}
 
-🌍 MAKRO DURUM:
+🌍 MAKRO:
 • DXY: {dxy_trend}
 • US10Y: {us10_trend}
-{macro_note if macro_note else "• Makro nötr"}
 
-⚖️ Gold / Silver: {gs:.2f} → {gs_state}
-🔁 Gold / BTC: {gb:.4f} → {gb_state}
-
-🧠 SONUÇ:
-Makro + teknik birlikte değerlendirildi. Ani alım için acele edilmemeli.
+⚖️ Gold / Silver: {gs:.2f}
+🔁 Gold / BTC: {gb:.4f}
 """.strip()
 
     send(msg)
