@@ -1,0 +1,30 @@
+name: Daily Gold Silver BTC Analysis
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 12:00 Türkiye saati
+  workflow_dispatch:
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repo Checkout
+        uses: actions/checkout@v4
+
+      - name: Python Setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          pip install yfinance pandas requests
+
+      - name: Run Analysis Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python analysis_bot.py
